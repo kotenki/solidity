@@ -1,0 +1,21 @@
+{
+  "name": "solidity",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^4.9.6",
+    "ethereum-waffle": "^2.2.0",
+    "hardhat": "^2.22.3"
+  },
+  "dependencies": {
+    "solidity-coverage": "^0.8.12"
+  }
+}

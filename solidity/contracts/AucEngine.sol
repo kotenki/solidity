@@ -74,7 +74,7 @@ contract AucEngine {
             cPrice - ((cPrice * FEE) / 100)
         );
 
-    emit AuctionEnded(index, cPrice, msg.sender);
+     emit AuctionEnded(index, cPrice, msg.sender);
 
     }
 

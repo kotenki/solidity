@@ -23,19 +23,24 @@ describe("AucEngine", function(){
         
     })
 
+    async function createAuction(_who, _price, _discount, _name, _duration) {
+        const createAuctionTx = await auct.connect(_who).createAuction(
+            ethers.parseEther(_price),
+            _discount,
+            _name,
+            _duration
+        )
+        return createAuctionTx;
+    }
+
     describe("createAuction", function () {
         it("creates auction correctly", async function () {
-            const { auct } = await loadFixture(deploy);
+            const { auct, owner} = await loadFixture(deploy);
             const auctionName = "fake item";
-            const tx = await auct.createAuction(
-                ethers.parseEther("0.0001"),
-                3,
-                auctionName,
-                60
-            )
+            const tx = await createAuction(owner, "0.0001", 3, auctionName, 60);
 
             const cAuction = await auct.auctions(0)
-            console.log(cAuction);
+            //console.log(cAuction);
             expect(cAuction.item).to.eq(auctionName)
             
 
@@ -43,20 +48,23 @@ describe("AucEngine", function(){
 
         it("sets end date correctly", async function () {
            const duration = 70 // seconds
-           const { auct } = await loadFixture(deploy); 
+           const { auct, owner } = await loadFixture(deploy); 
 
-           const tx = await auct.createAuction(
-            ethers.parseEther("0.0001"),
-            3,
-            "test",
-            duration
-        )
+           const tx = await createAuction(owner, "0.0001", 3, "test", duration);
 
-        const timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
-        //console.log("block timestamp of auction creation")
-        //console.log(timestamp)
-        expect((await auct.auctions(0)).endsAt).to.be.eq(timestamp + duration);
 
+            const timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
+            expect((await auct.auctions(0)).endsAt).to.be.eq(timestamp + duration);
+
+        })
+
+        it("checks validity of starting price", async function() {
+            const { auct, owner } = await loadFixture(deploy); 
+
+            await expect(
+                createAuction(owner, "0.0000001", 10000000000, "test", 60))
+                .to.be.revertedWith('incorrect starting price');
+                    
         })
     })
 
@@ -68,36 +76,95 @@ describe("AucEngine", function(){
         it("allows to buy", async function () {
             const { seller, buyer, auct } = await loadFixture(deploy); 
 
-            const createAuctionTx = await auct.connect(seller).createAuction(
-                ethers.parseEther("0.0001"),
-                3,
-                "test",
-                60
-            )
-            console.log("Auction created: ")
-            console.log(await auct.auctions(0)) 
+            const createAuctionTx = await createAuction(seller, "0.0001", 3, "test", 60);
 
             this.timeout(5000) // 5s
+            await delay(1000);
 
-            await delay(3000);
-            console.log("Getting price for item: ")
-            console.log(await auct.getPriceFor(0))
-            
-            console.log("Buying...")
             const buyTx = await auct.connect(buyer).
               buy(0, {value: ethers.parseEther("0.0002")})
 
             const cAuction = await auct.auctions(0)
             const finalPrice = cAuction.finalPrice;
-
-            //console.log(cAuction) 
+            //console.log("finalPrice = ",finalPrice)
 
             await expect(() => buyTx).
               to.changeEtherBalance(
-                seller, finalPrice - Math.floor((finalPrice * 10) / 100)
+                seller, BigInt(finalPrice) - ((finalPrice * BigInt(10)) / BigInt(100))
               )
+
+            await expect(buyTx)
+              .to.emit(auct, 'AuctionEnded')
+              .withArgs(0, finalPrice, buyer.address)
+
+            await expect(
+                auct.connect(buyer).
+                    buy(0, {value: ethers.parseEther("0.0002")})
+            ).to.be.revertedWith('stopped!');
+        })
+
+        it("doesn't allow to fetch current price when the auction is finished", async function() {
+            const { auct, owner } = await loadFixture(deploy); 
+            const createAuctionTx = await createAuction(owner, "0.0001", 3, "test", 2);
+            const buyTx = await auct.connect(buyer).
+                buy(0, {value: ethers.parseEther("0.0002")});
+
+            await expect(
+                auct.getPriceFor(0)
+            ).to.be.revertedWith("stopped!");
             
 
+        })
+
+        it("doesn't allow to buy when the auction is ended", async function () {
+            const { auct, seller, buyer } = await loadFixture(deploy); 
+            const createAuctionTx = await createAuction(seller, "0.0001", 3, "test", 2);
+            
+            this.timeout(5000)
+            await delay(3000);
+
+            await expect(
+                auct.connect(buyer).buy(0, {value: ethers.parseEther("0.0002")})
+            ).to.be.revertedWith("ended!");
+
+        })
+
+        it("doesn't allow to buy when not enough funds sent", async function () {
+            const { auct, seller, buyer } = await loadFixture(deploy); 
+            const createAuctionTx = await createAuction(seller, "0.0001", 3, "test", 60);
+            await expect(
+                auct.connect(buyer).buy(0, {value: ethers.parseEther("0.000005")})
+            ).to.be.revertedWith("not enough funds");
+        })
+    })
+
+    describe("withdraw", function () {
+        it("allows to withdraw", async function () {
+            const { auct, seller, buyer, owner } = await loadFixture(deploy); 
+            const createAuctionTx = await createAuction(seller, "0.0001", 3, "test", 60);
+
+            const buyTx = await auct.connect(buyer).
+              buy(0, {value: ethers.parseEther("0.0002")});
+
+            const cAuction = await auct.auctions(0)
+            const finalPrice = cAuction.finalPrice;
+
+            await expect(auct.withdraw(owner.address)).
+                to.changeEtherBalance(
+                    owner, ((BigInt(finalPrice) * BigInt(10)) / BigInt(100)))
+        })
+        it("doesn't allow to withdraw to not an owner", async function () {
+            const { auct, seller, buyer, owner } = await loadFixture(deploy); 
+            const createAuctionTx = await createAuction(seller, "0.0001", 3, "test", 60);
+
+            const buyTx = await auct.connect(buyer).
+              buy(0, {value: ethers.parseEther("0.0002")});
+
+            //onst cAuction = await auct.auctions(0)
+            //const finalPrice = cAuction.finalPrice;
+            
+            await expect(auct.connect(seller).withdraw(seller.address)).
+                to.be.revertedWith("you are not the owner!");
         })
     })
 
